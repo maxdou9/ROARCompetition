@@ -39,44 +39,57 @@ curvature = estimate_curvature(track_xy)
 # Normalize curvature for color mapping
 curv_norm = curvature / (curvature.max() + 1e-9)
 
-totalPoints = len(waypoints) + len(track)
+totalPoints = len(track)
 progressBar = IncrementalBar("Plotting points", max=totalPoints)
 
 plt.figure(figsize=(11, 11))
 plt.axis((-1100, 1100, -1100, 1100))
 plt.tight_layout()
 
-# Plot colored curvature line
+# Plot colored curvature line - use thicker lines and plot ONLY the track
 for i in range(len(track) - 1):
     c = plt.cm.plasma(curv_norm[i])   # color proportional to turn sharpness
     seg = track_xy[i:i+2]
-    plt.plot(seg[:, 0], seg[:, 1], color=c, linewidth=3)
-    progressBar.next()
-
-# Plot headings
-for waypoint in track:
-    waypoint_heading = tr3d.euler.euler2mat(*waypoint.roll_pitch_yaw) @ np.array([1, 0, 0])
-    plt.arrow(
-        waypoint.location[0],
-        waypoint.location[1],
-        waypoint_heading[0] * 1,
-        waypoint_heading[1] * 1,
-        width=0.3,
-        color="black",
-        alpha=0.4,
-    )
-
-# Plot your waypoints normally
-for i in waypoints:
-    plt.plot(i.location[0], i.location[1], "ro")
+    plt.plot(seg[:, 0], seg[:, 1], color=c, linewidth=5)
     progressBar.next()
 
 progressBar.finish()
+
+# Optionally plot waypoints as small markers (uncomment if you want to see them)
+# Plotting them AFTER the track so they appear on top
+SHOW_PRIMARY_WAYPOINTS = False  # Set to True to show your custom waypoints
+SHOW_HEADINGS = False           # Set to True to show direction arrows
+
+if SHOW_PRIMARY_WAYPOINTS:
+    print("Plotting primary waypoints...")
+    for i in waypoints:
+        plt.plot(i.location[0], i.location[1], "ko", markersize=2, alpha=0.5)
+
+if SHOW_HEADINGS:
+    print("Plotting headings...")
+    # Plot headings (every Nth waypoint to avoid clutter)
+    for idx, waypoint in enumerate(track):
+        if idx % 20 == 0:  # only every 20th waypoint
+            waypoint_heading = tr3d.euler.euler2mat(*waypoint.roll_pitch_yaw) @ np.array([1, 0, 0])
+            plt.arrow(
+                waypoint.location[0],
+                waypoint.location[1],
+                waypoint_heading[0] * 10,
+                waypoint_heading[1] * 10,
+                width=2,
+                color="black",
+                alpha=0.6,
+            )
+
 print()
 
-# Add legend-ish colorbar
+# Add colorbar
 sm = plt.cm.ScalarMappable(cmap="plasma")
 sm.set_array(curvature)
 plt.colorbar(sm, label="Turn Sharpness (Curvature)")
+
+plt.title("Monza Track - Curvature Heatmap")
+plt.xlabel("X")
+plt.ylabel("Y")
 
 plt.show()
