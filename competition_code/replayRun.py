@@ -10,16 +10,17 @@ import bisect
 
 
 # mu coefficients from ThrottleController.py - higher mu = more aggressive cornering
-MU_BY_ID = {
-    0: 4.0,
-    2: 3.37,
+        MU_BY_ID = {
+    0: 4,
+    2: 3.37,     # changed from 3.35
     3: 3.35,
     10: 4.0,
     4: 2.85,
     5: 2.9,
     6: 3.3,
-    9: 2.2,
-}
+    7: 3.0, # changed from 2.75
+    9: 2.3,     # changed from 2.2
+        }
 DEFAULT_MU = 2.75
 
 # section metadata from submission.py (id -> approximate start location)
