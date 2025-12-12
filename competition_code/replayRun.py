@@ -5,7 +5,52 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.widgets import Button, Slider
+from matplotlib.patches import Patch
 import bisect
+
+
+# mu coefficients from ThrottleController.py - higher mu = more aggressive cornering
+MU_BY_ID = {
+    0: 4.0,
+    2: 3.37,
+    3: 3.35,
+    10: 4.0,
+    4: 2.85,
+    5: 2.9,
+    6: 3.3,
+    9: 2.2,
+}
+DEFAULT_MU = 2.75
+
+# section metadata from submission.py (id -> approximate start location)
+SECTION_METADATA = [
+    {"id": 0, "loc": [-278, 372]},
+    {"id": 1, "loc": [64, 890]},
+    {"id": 2, "loc": [511, 1037]},
+    {"id": 3, "loc": [762, 908]},
+    {"id": 10, "loc": [664, 667]},
+    {"id": 4, "loc": [198, 307]},
+    {"id": 5, "loc": [-11, 60]},
+    {"id": 6, "loc": [-85, -339]},
+    {"id": 7, "loc": [-210, -1060]},
+    {"id": 8, "loc": [-318, -991]},
+    {"id": 9, "loc": [-352, -119]},
+]
+
+
+def get_mu_for_section(section_id):
+    """Return the mu coefficient for a given section ID."""
+    return MU_BY_ID.get(section_id, DEFAULT_MU)
+
+
+def get_mu_color(mu_value):
+    """Map mu value to a color. Low mu (conservative) -> red, high mu (aggressive) -> green."""
+    # normalize mu to 0-1 range (mu typically ranges from ~2.0 to ~4.0)
+    mu_min, mu_max = 2.0, 4.5
+    normalized = (mu_value - mu_min) / (mu_max - mu_min)
+    normalized = np.clip(normalized, 0, 1)
+    cmap = plt.cm.RdYlGn
+    return cmap(normalized)
 
 
 def load_debug_data() -> dict:
@@ -14,6 +59,7 @@ def load_debug_data() -> dict:
     candidates = [
         os.path.join(script_dir, "debugData", "debugData.json"),
         os.path.join(script_dir, "debugData.json"),
+        os.path.join(script_dir, "competition_code", "debugData", "debugData.json"),
     ]
     for path in candidates:
         if os.path.exists(path):
@@ -25,7 +71,7 @@ def load_debug_data() -> dict:
 
 
 def to_points(debug_dict: dict):
-    """Convert debug dict keyed by ticks -> iterable of (lap, x, y, speed, section, section_ticks, tick_idx)."""
+    """Convert debug dict keyed by ticks -> iterable of (lap, x, y, speed, section_id, section_ticks, tick_idx)."""
     points = []
     # Sort by numeric tick key to preserve temporal order
     items = []
@@ -82,11 +128,11 @@ def main():
 
 
     # --- Mode state ---
-    mode_names = ["Speed mode", "Throttle/Brake mode"]
-    mode = [0]  # mutable for closure (0=speed, 1=throttle/brake)
+    mode_names = ["Speed mode", "Throttle/Brake mode", "Mu Zones mode"]
+    mode = [0]  # mutable for closure (0=speed, 1=throttle/brake, 2=mu zones)
 
     # Build interactive figure
-    fig, ax = plt.subplots(figsize=(11, 11))
+    fig, ax = plt.subplots(figsize=(12, 11))
     plt.subplots_adjust(left=0.08, right=0.95, bottom=0.18)
     ax.set_axisbelow(True)
     ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.6)
@@ -143,6 +189,7 @@ def main():
     current_idx = 0
     sec_markers = []
     sec_annots = []
+    sec_boundary_lines = []  # for mu zone background lines
     cbar = None
 
     def compute_boundaries(_speeds_arr: np.ndarray):
@@ -198,7 +245,7 @@ def main():
     lap_label = fig.text(0.5, 0.085, f"Lap {current_idx + 1}/{len(laps)}", ha="center", va="center")
 
     # Mode toggle button
-    ax_mode = plt.axes([0.12, 0.12, 0.12, 0.05])
+    ax_mode = plt.axes([0.12, 0.12, 0.15, 0.05])
     btn_mode = Button(ax_mode, mode_names[mode[0]])
 
     # Precompute cumulative time (ticks) per lap using section_ticks with reset at each section
@@ -275,8 +322,9 @@ def main():
     tslider.on_changed(on_time_change)
 
     # Section markers for initial lap
-    def draw_sections(lap_pts):
-        nonlocal sec_markers, sec_annots
+    def draw_sections(lap_pts, show_mu_zones=False):
+        """Draw section markers with mu coefficient labels. If show_mu_zones=True, color track segments by mu."""
+        nonlocal sec_markers, sec_annots, sec_boundary_lines
         # clear existing
         for m in sec_markers:
             try:
@@ -288,36 +336,93 @@ def main():
                 a.remove()
             except Exception:
                 pass
+        for line in sec_boundary_lines:
+            try:
+                line.remove()
+            except Exception:
+                pass
         sec_markers = []
         sec_annots = []
+        sec_boundary_lines = []
 
         first_by_section = {}
+        points_by_section = {}
+        
         for p in lap_pts:
             sec, sec_ticks = p[4], p[5]
             if sec is None or sec_ticks is None:
                 continue
+            # track all points per section for zone coloring
+            if sec not in points_by_section:
+                points_by_section[sec] = []
+            points_by_section[sec].append((p[1], p[2]))
+            # track first point of each section
             if sec not in first_by_section or (sec_ticks < first_by_section[sec][2]):
                 first_by_section[sec] = (p[1], p[2], sec_ticks)
 
-        for sec, (sx, sy, _) in sorted(first_by_section.items(), key=lambda kv: kv[0]):
-            marker = ax.scatter([sx], [sy], c="black", s=20, marker="x")
+        # draw mu-colored zone backgrounds if in mu zones mode
+        if show_mu_zones:
+            for sec_id, pts in points_by_section.items():
+                if len(pts) < 2:
+                    continue
+                mu_val = get_mu_for_section(sec_id)
+                color = get_mu_color(mu_val)
+                xs = [pt[0] for pt in pts]
+                ys = [pt[1] for pt in pts]
+                zone_line, = ax.plot(xs, ys, 'o', color=color, markersize=8, alpha=0.4, zorder=1)
+                sec_boundary_lines.append(zone_line)
+
+        for sec_id, (sx, sy, _) in sorted(first_by_section.items(), key=lambda kv: kv[0]):
+            mu_val = get_mu_for_section(sec_id)
+            mu_color = get_mu_color(mu_val)
+            
+            # section marker (diamond shape, colored by mu)
+            marker = ax.scatter([sx], [sy], c=[mu_color], s=120, marker="D", 
+                              edgecolors="black", linewidths=1.5, zorder=4)
+            
+            # label with section ID and mu value
+            label_text = f"S{sec_id}\nμ={mu_val:.2f}"
             ann = ax.annotate(
-                f"S{sec}",
+                label_text,
                 (sx, sy),
                 textcoords="offset points",
-                xytext=(6, 6),
+                xytext=(12, 12),
                 fontsize=9,
+                fontweight="bold",
                 color="black",
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="black", alpha=0.6),
+                bbox=dict(
+                    boxstyle="round,pad=0.3", 
+                    fc=mu_color, 
+                    ec="black", 
+                    alpha=0.85
+                ),
+                zorder=6
             )
             sec_markers.append(marker)
             sec_annots.append(ann)
 
-    draw_sections(init_pts)
+    draw_sections(init_pts, show_mu_zones=False)
 
-    # Update function when changing lap
+    def draw_mu_legend():
+        """Draw a legend explaining mu values."""
+        mu_values = sorted(set([get_mu_for_section(s["id"]) for s in SECTION_METADATA]))
+        
+        legend_elements = []
+        for mu in mu_values:
+            color = get_mu_color(mu)
+            patch = Patch(facecolor=color, edgecolor='black', label=f'μ={mu:.2f}')
+            legend_elements.append(patch)
+        
+        legend_elements.append(Patch(facecolor='none', edgecolor='none', label='─────────'))
+        legend_elements.append(Patch(facecolor=get_mu_color(2.2), edgecolor='black', label='Low μ = Conservative'))
+        legend_elements.append(Patch(facecolor=get_mu_color(4.0), edgecolor='black', label='High μ = Aggressive'))
+        
+        return legend_elements
+
+    mu_legend = None
+
     def update_to_index(idx: int, force: bool = False):
-        nonlocal current_idx, cbar, norm
+        nonlocal current_idx, cbar, norm, mu_legend
         idx = max(0, min(idx, len(laps) - 1))
         if idx == current_idx and not force:
             return
@@ -336,8 +441,16 @@ def main():
             sp = np.array([0.0])
             tb_scalars = np.array([0.0])
 
+        # remove existing mu legend if present
+        if mu_legend is not None:
+            try:
+                mu_legend.remove()
+            except:
+                pass
+            mu_legend = None
+
         # Update scatter data and colorbar depending on mode
-        if mode[0] == 0:
+        if mode[0] == 0:  # speed mode
             sc.set_offsets(np.column_stack([xs, ys]))
             sc.set_array(sp)
             boundaries_new, norm_new, ticks_new, labels_new = compute_boundaries(sp)
@@ -352,7 +465,9 @@ def main():
             cbar.set_ticks(ticks_new)
             cbar.set_ticklabels(labels_new)
             cbar.set_label("Speed (km/h)")
-        else:
+            draw_sections(lap_pts, show_mu_zones=False)
+            
+        elif mode[0] == 1:  # throttle/brake mode
             sc.set_offsets(np.column_stack([xs, ys]))
             sc.set_array(tb_scalars)
             sc.set_cmap(tb_scalar_cmap)
@@ -367,19 +482,49 @@ def main():
             cbar.set_ticks([0.0, BRAKE_MAX_SCALAR/2, BRAKE_MAX_SCALAR, THROTTLE_SCALAR_VALUE])
             cbar.set_ticklabels(["None", "Brake 50%", "Brake 100%", "Throttle"])
             cbar.set_label(f"Brake (0-{BRAKE_MAX_SCALAR}) / Throttle (>{BUFFER_END})")
+            draw_sections(lap_pts, show_mu_zones=False)
+            
+        elif mode[0] == 2:  # mu zones mode
+            # color points by their section's mu value
+            mu_colors = []
+            for p in lap_pts:
+                sec_id = p[4]
+                if sec_id is not None:
+                    mu_val = get_mu_for_section(sec_id)
+                    mu_colors.append(get_mu_color(mu_val))
+                else:
+                    mu_colors.append((0.5, 0.5, 0.5, 1.0))
+            
+            sc.set_offsets(np.column_stack([xs, ys]))
+            sc.set_facecolors(mu_colors)
+            sc.set_array(None)  # clear the array-based coloring
+            
+            if cbar is not None:
+                try:
+                    cbar.remove()
+                except Exception:
+                    pass
+            
+            # custom colorbar for mu values
+            mu_cmap = plt.cm.RdYlGn
+            mu_norm = mcolors.Normalize(vmin=2.0, vmax=4.5)
+            sm = plt.cm.ScalarMappable(cmap=mu_cmap, norm=mu_norm)
+            sm.set_array([])
+            cbar = fig.colorbar(sm, ax=ax)
+            cbar.set_label("Friction Coefficient (μ)")
+            
+            draw_sections(lap_pts, show_mu_zones=True)
+            mu_legend = ax.legend(handles=draw_mu_legend(), loc='upper left', fontsize=8, title="Section μ Values")
 
         # Update sections and title
-        draw_sections(lap_pts)
-        ax.set_title(f"Lap {lap}")
+        ax.set_title(f"Lap {lap} - {mode_names[mode[0]]}")
         lap_label.set_text(f"Lap {current_idx + 1}/{len(laps)}")
         fig.canvas.draw_idle()
 
 
-    # Mode toggle logic
     def on_mode(event):
-        mode[0] = 1 - mode[0]
+        mode[0] = (mode[0] + 1) % 3  # cycle through 3 modes
         btn_mode.label.set_text(mode_names[mode[0]])
-        # Force full reload of current lap in new mode
         update_to_index(current_idx, force=True)
 
     btn_mode.on_clicked(on_mode)
@@ -399,14 +544,35 @@ def main():
     btn_prev.on_clicked(on_prev)
     btn_next.on_clicked(on_next)
 
-    # Keyboard shortcuts: left/right arrows
+    # Keyboard shortcuts: left/right arrows, m for mode
     def on_key(event):
         if event.key == "left":
             on_prev(event)
         elif event.key == "right":
             on_next(event)
+        elif event.key == "m":
+            on_mode(event)
 
     fig.canvas.mpl_connect('key_press_event', on_key)
+
+    # print mu summary to console
+    print("\nSection mu coefficients:")
+    print(f"{'ID':<6} {'μ':<8} {'Notes':<20}")
+    print("-" * 34)
+    for s in SECTION_METADATA:
+        sec_id = s["id"]
+        mu = get_mu_for_section(sec_id)
+        if mu >= 3.5:
+            note = "aggressive"
+        elif mu >= 3.0:
+            note = "medium-high"
+        elif mu >= 2.75:
+            note = "medium"
+        else:
+            note = "conservative"
+        print(f"S{sec_id:<5} {mu:<8.2f} {note:<20}")
+    print(f"\nDefault μ: {DEFAULT_MU}")
+    print("Press 'M' to cycle modes: Speed → Throttle/Brake → Mu Zones\n")
 
     plt.show()
 
