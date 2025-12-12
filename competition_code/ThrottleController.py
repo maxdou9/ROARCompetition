@@ -516,7 +516,8 @@ class ThrottleController:
             4: 2.85,
             5: 2.9,
             6: 3.3,
-            9: 2.2,     # changed from 2.1
+            7: 3.0, # changed from 2.75
+            9: 2.3,     # changed from 2.2
         }
         mu = mu_by_id.get(current_section_id, mu)
 
