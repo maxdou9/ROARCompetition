@@ -24,11 +24,12 @@ def estimate_curvature(points: np.ndarray) -> np.ndarray:
     return curv
 
 print("\nLoading Waypoints\n")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 waypoints = roar_py_interface.RoarPyWaypoint.load_waypoint_list(
-    np.load(f"{os.path.dirname(__file__)}\\waypoints\\waypointsPrimary.npz")
+    np.load(os.path.join(SCRIPT_DIR, "waypoints", "waypointsPrimary.npz"))
 )
 track = roar_py_interface.RoarPyWaypoint.load_waypoint_list(
-    np.load(f"{os.path.dirname(__file__)}\\waypoints\\Monza Original Waypoints.npz")
+    np.load(os.path.join(SCRIPT_DIR, "waypoints", "Monza Original Waypoints.npz"))
 )
 
 # Convert track to Nx2 array for curvature computation
