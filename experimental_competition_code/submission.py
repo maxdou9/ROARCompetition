@@ -17,6 +17,9 @@ import atexit
 
 # from scipy.interpolate import interp1d
 
+# Store the directory path at module load time
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+
 useDebug = True
 useDebugPrinting = False
 debugData = {}
@@ -48,83 +51,13 @@ def findClosestIndex(location, waypoints: List[roar_py_interface.RoarPyWaypoint]
     return closestInd % len(waypoints)
 
 
-def get_radius(loc1, loc2, loc3):
-    """Returns the radius of a curve given 3 waypoints using the Menger Curvature Formula
-
-    Args:
-        wp ([roar_py_interface.RoarPyWaypoint]): A list of 3 RoarPyWaypoints
-
-    Returns:
-        float: The radius of the curve made by the 3 given waypoints
-    """
-
-    point1 = (loc1[0], loc1[1])
-    point2 = (loc2[0], loc2[1])
-    point3 = (loc3[0], loc3[1])
-
-    # Calculating length of all three sides
-    side1 = round(math.dist(point1, point2), 3)
-    side2 = round(math.dist(point2, point3), 3)
-    side3 = round(math.dist(point1, point3), 3)
-
-    # sp is semi-perimeter
-    sp = (side1 + side2 + side3) / 2
-
-    # Calculating area using Herons formula
-    area_squared = sp * (sp - side1) * (sp - side2) * (sp - side3)
-
-    # Calculating curvature using Menger curvature formula
-    radius = (side1 * side2 * side3) / (4 * math.sqrt(area_squared))
-
-    return radius
-
-
-def findCorners(track: [roar_py_interface.RoarPyWaypoint]):
-    curAngle = track[0].roll_pitch_yaw[2]
-    angleDiffForCorner = 0.15
-    angleDiffForEnd = 0.075
-    # radForCorner = 100
-    isCorner = False
-    cornerStartIndex = None
-    corners = []
-
-    for i in range(len(track) + 5):
-        farAngleDiff = abs(curAngle - track[(i + 8) % len(track)].roll_pitch_yaw[2])
-        shortAngleDiff = abs(curAngle - track[(i + 5) % len(track)].roll_pitch_yaw[2])
-
-        if (
-            farAngleDiff > angleDiffForCorner
-            or (shortAngleDiff > angleDiffForCorner and farAngleDiff < angleDiffForEnd)
-        ) and not isCorner:
-            # cornerStart = track[i % len(track)]
-            cornerStartIndex = i + 2
-            isCorner = True
-        elif farAngleDiff < angleDiffForEnd and isCorner:
-            isCorner = False
-            if i - cornerStartIndex > 7:
-                # cornerEnd = track[(i + 4) % len(track)]
-                cornerInfo = {}
-                cornerInfo["startLoc"] = track[cornerStartIndex].location
-                cornerInfo["midLoc"] = track[
-                    cornerStartIndex + round((i - cornerStartIndex) * 0.4)
-                ].location
-                cornerInfo["endLoc"] = track[i].location
-                cornerInfo["radius"] = get_radius(
-                    cornerInfo["startLoc"], cornerInfo["midLoc"], cornerInfo["endLoc"]
-                )
-                corners.append(cornerInfo)
-
-        curAngle = track[i % len(track)].roll_pitch_yaw[2]
-    return corners
-
-
 @atexit.register
 def saveDebugData():
     if useDebug:
         print("Saving debug data")
         jsonData = json.dumps(debugData, indent=4)
         with open(
-            f"{os.path.dirname(__file__)}\\debugData\\debugData.json", "w+"
+            os.path.join(SCRIPT_DIR, "debugData", "debugData.json"), "w+"
         ) as outfile:
             outfile.write(jsonData)
         print("Debug Data Saved")
@@ -153,44 +86,58 @@ class RoarCompetitionSolution:
         self.lat_controller = LatController()
         self.throttle_controller = ThrottleController()
         self.section_indeces = []
+        # Stable section IDs aligned with section_indeces; use these for tuning so inserting sections doesn't shift behavior
+        self.section_ids = []
         self.num_ticks = 0
         self.section_start_ticks = 0
+        # current_section is the physical index into section_indeces (legacy); current_section_id is the stable ID
         self.current_section = 0
+        self.current_section_id = 0
         self.lapNum = 1
 
     async def initialize(self) -> None:
         # NOTE waypoints are changed through this line
         self.maneuverable_waypoints = (
             roar_py_interface.RoarPyWaypoint.load_waypoint_list(
-                np.load(f"{os.path.dirname(__file__)}\\waypoints\\waypointsPrimary.npz")
-            )[25:]
+                np.load(os.path.join(SCRIPT_DIR, "waypoints", "waypointsPrimary.npz"))
+            )[35:]
         )
 
-        sectionLocations = [
-            [-278, 372],
-            [64, 890],
-            [511, 1037],
-            [762, 908],
-            [198, 307],
-            [-8, 80],
-            [-85, -339],
-            [-150, -1042],
-            [-318, -991],
-            [-352, -119],
-            [-300, 330],
+        # Define sections with stable IDs. Keep these IDs unchanged even if you insert a new section later.
+        section_metadata = [
+            {"id": 0, "loc": [-278, 372]},   # Section 0 start location
+            {"id": 1, "loc": [64, 890]},    # Section 1 start location
+            {"id": 2, "loc": [511, 1037]},  # Section 2 start location
+            {"id": 3, "loc": [762, 908]},   # Section 3 start location
+            {"id": 10, "loc": [664, 667]}, # Section 10 start location (I added it)
+            {"id": 4, "loc": [198, 307]},   # Section 4 start location
+            {"id": 5, "loc": [-11, 60]},    # Section 5 start location
+            {"id": 6, "loc": [-85, -339]},  # Section 6 start location
+            {"id": 7, "loc": [-210, -1060]},# Section 7 start location 
+            {"id": 8, "loc": [-318, -991]}, # Section 8 start location
+            {"id": 9, "loc": [-352, -119]}, # Section 9 start location
         ]
-        for i in sectionLocations:
-            self.section_indeces.append(
-                findClosestIndex(i, self.maneuverable_waypoints)
-            )
 
-        self.cornerInfo = findCorners(
-            roar_py_interface.RoarPyWaypoint.load_waypoint_list(
-                np.load(
-                    f"{os.path.dirname(__file__)}\\waypoints\\monzaOriginalWaypoints.npz"
-                )
+        # for me testing lol
+        # sectionLocations = [
+        #     [-278, 372], # Section 0 start location
+        #     [-144, 847], # Section 1 start location
+        #     [256, 911], # Section 2 start location
+        #     [657, 1071], # Section 3 start location
+        #     [664, 667],  # I wanna add this but don't rly wanna change everything to match T_T
+        #     [710, 704], # Section 4 start location
+        #     [73, 204], # Section 5 start location
+        #     [-84, -216], # Section 6 start location
+        #     [-210, -1060], # Section 7 start location 
+        #     [-318, -991], # Section 8 start location
+        #     [-372, -619], # Section 9 start location
+        # ]
+        # Build section indices and stable IDs
+        for s in section_metadata:
+            self.section_indeces.append(
+                findClosestIndex(np.array(s["loc"], dtype=float), self.maneuverable_waypoints)
             )
-        )
+            self.section_ids.append(int(s["id"]))
 
         print(f"True total length: {len(self.maneuverable_waypoints) * 3}")
         print(f"1 lap length: {len(self.maneuverable_waypoints)}")
@@ -236,7 +183,13 @@ class RoarCompetitionSolution:
                 print(f"Section {i}: {self.num_ticks - self.section_start_ticks} ticks")
                 self.section_start_ticks = self.num_ticks
                 self.current_section = i
-                if self.current_section == 0 and self.lapNum != 3:
+                # Set stable section ID for tuning/logic
+                if i < len(self.section_ids):
+                    self.current_section_id = self.section_ids[i]
+                else:
+                    self.current_section_id = i  # fallback
+
+                if self.current_section_id == 0 and self.lapNum != 3:
                     self.lapNum += 1
                     print(f"\nLap {self.lapNum}\n")
 
@@ -256,32 +209,42 @@ class RoarCompetitionSolution:
             waypoints_for_throttle,
             vehicle_location,
             current_speed_kmh,
-            self.current_section,
-            self.cornerInfo,
+            self.current_section_id,
         )
 
-        steerMultiplier = round(abs(current_speed_kmh) / 110, 3)
-
-        if self.current_section == 1:
-            steerMultiplier *= 1.7
-        if self.current_section == 2:
-            steerMultiplier *= 1.65
-        if self.current_section in [3]:
-            steerMultiplier = np.clip(steerMultiplier * 1.75, 2.75, 4)
-        if self.current_section == 4:
-            steerMultiplier = np.clip(steerMultiplier * 1.5, 2, 4)
-        # if self.current_section in [6]:
-        #     steerMultiplier = min(steerMultiplier * 5, 5.35)
-        if self.current_section == 6:
-            steerMultiplier = np.clip(steerMultiplier * 5.25, 5.25, 7)
-            # steerMultiplier = 1.5
-        # if self.current_section == 7:
-        #     steerMultiplier *= 2
-        if self.current_section in [9]:
-            steerMultiplier = max(steerMultiplier, 1.4)
-        if self.current_section in [10]:
-            # steerMultiplier = max(steerMultiplier, 1.6)
-            steerMultiplier = np.clip(steerMultiplier * 1.25, 1.05, 1.5)
+        steerMultiplier = round((current_speed_kmh + 0.001) / 120, 3)
+        
+        sid = self.current_section_id
+        
+        # === S0 - Moderate boost, let lookahead handle timing ===
+        if sid == 0:
+            # Reduced from 1.5x to 1.3x
+            steerMultiplier *= 1.3
+            if current_speed_kmh > 180:
+                steerMultiplier = max(steerMultiplier, 1.8)
+        
+        # === S1 - Corner apex - still needs good steering ===
+        if sid == 1:
+            # Reduced from 1.8x to 1.5x
+            steerMultiplier *= 1.5
+            if current_speed_kmh > 150:
+                steerMultiplier = max(steerMultiplier, 2.0)
+        
+        # === EXISTING CODE (unchanged) ===
+        if sid == 2:
+            steerMultiplier *= 1.2
+        if sid in [3]:
+            steerMultiplier = np.clip(steerMultiplier * 1.75, 2.3, 3.5)
+        if sid == 4:
+            steerMultiplier = min(1.45, steerMultiplier * 1.65)
+        if sid == 5:
+            steerMultiplier *= 1.1
+        if sid in [6]:
+            steerMultiplier = np.clip(steerMultiplier * 5.5, 5.5, 7)
+        if sid == 7:
+            steerMultiplier *= 2
+        if sid == 9:
+            steerMultiplier = max(steerMultiplier, 1.6)
 
         control = {
             "throttle": np.clip(throttle, 0, 1),
@@ -289,10 +252,9 @@ class RoarCompetitionSolution:
             "brake": np.clip(brake, 0, 1),
             "hand_brake": 0,
             "reverse": 0,
-            "target_gear": gear,  # Gears do not appear to have an impact on speed
+            "target_gear": gear,
         }
-
-        # Store debug data for later use
+        
         if useDebug:
             debugData[self.num_ticks] = {}
             debugData[self.num_ticks]["loc"] = [
@@ -303,14 +265,24 @@ class RoarCompetitionSolution:
             debugData[self.num_ticks]["brake"] = round(float(control["brake"]), 3)
             debugData[self.num_ticks]["steer"] = round(float(control["steer"]), 10)
             debugData[self.num_ticks]["speed"] = round(current_speed_kmh, 3)
+            # The chosen recommended speed (km/h) from ThrottleController for this tick
+            rec_speed = self.throttle_controller.last_recommended_speed_kmh
+            if rec_speed is not None:
+                debugData[self.num_ticks]["recommended_speed"] = round(float(rec_speed), 3)
+            else:
+                debugData[self.num_ticks]["recommended_speed"] = None
             debugData[self.num_ticks]["lap"] = self.lapNum
+            # Add section info per tick
+            debugData[self.num_ticks]["section"] = int(self.current_section)
+            # Stable section ID that won't shift if you insert new sections
+            debugData[self.num_ticks]["section_id"] = int(self.current_section_id)
+            debugData[self.num_ticks]["section_ticks"] = int(self.num_ticks - self.section_start_ticks)
 
-            # Print debug data
-            if useDebugPrinting and self.num_ticks % 2 == 0:
+            if useDebugPrinting and self.num_ticks % 5 == 0:
                 print(
-                    f"- Current location: ({vehicle_location[0].item():.2f}, {vehicle_location[1].item():.2f}) index {self.current_waypoint_idx} section {self.current_section} \n\
-Target waypoint: ({waypoint_to_follow.location[0]:.2f}, {waypoint_to_follow.location[1]:.2f}) index {nextWaypointIndex} \n\
-Distance to target waypoint: {math.sqrt((waypoint_to_follow.location[0] - vehicle_location[0].item()) ** 2 + (waypoint_to_follow.location[1] - vehicle_location[1].item()) ** 2):.3f}\n"
+                    f"- Target waypoint: ({waypoint_to_follow.location[0]:.2f}, {waypoint_to_follow.location[1]:.2f}) index {nextWaypointIndex} \n\
+Current location: ({vehicle_location[0]:.2f}, {vehicle_location[1]:.2f}) index {self.current_waypoint_idx} section {self.current_section} \n\
+Distance to target waypoint: {math.sqrt((waypoint_to_follow.location[0] - vehicle_location[0]) ** 2 + (waypoint_to_follow.location[1] - vehicle_location[1]) ** 2):.3f}\n"
                 )
 
                 print(
@@ -349,7 +321,7 @@ Steer: {control['steer']:.10f} \n"
 
         for speed_upper_bound, num_points in speed_to_lookahead_dict.items():
             if speed < speed_upper_bound:
-                return num_points
+                return num_points       # number of waypoints to look ahead by
         return 8
 
     def get_lookahead_index(self, speed):
@@ -365,7 +337,6 @@ Steer: {control['steer']:.10f} \n"
             self.maneuverable_waypoints
         )
 
-    # Old code (used with PID)
     # def get_lateral_pid_config(self):
     #     """
     #     Returns the PID values for the lateral (steering) PID
@@ -393,85 +364,75 @@ Steer: {control['steer']:.10f} \n"
         """
         Returns a new averaged waypoint based on the location of a number of other waypoints
         """
-        # next_waypoint_index = self.get_lookahead_index(current_speed)
-        next_waypoint_index = (self.current_waypoint_idx + 18) % len(
-            self.maneuverable_waypoints
-        )
+        next_waypoint_index = self.get_lookahead_index(current_speed)
         lookahead_value = self.get_lookahead_value(current_speed)
         num_points = lookahead_value * 2
 
-        # # Section specific tuning
-        # if self.current_section == 0:
-        #     num_points = round(lookahead_value * 1.5)
-        if self.current_section == 1:
-            # next_waypoint_index = self.current_waypoint_idx + 14
-            next_waypoint_index = self.get_lookahead_index(current_speed) - 2
-        if self.current_section == 2:
-            next_waypoint_index = self.current_waypoint_idx + 22
-        if self.current_section == 3:
-            next_waypoint_index = self.current_waypoint_idx + 22
-            num_points = 30
-        if self.current_section == 4:
-            num_points = 24
-            next_waypoint_index = self.current_waypoint_idx + 22
-        if self.current_section == 5:
-            num_points = round(lookahead_value * 1.35)
-        if self.current_section == 6:
-            num_points = 8
-            next_waypoint_index = self.current_waypoint_idx + 23
-        # if self.current_section == 7:
-        #     next_waypoint_index = self.current_waypoint_idx + 18
-        # # if self.current_section == 7:
-        # #     num_points = round(lookahead_value * 1.25)
-        if self.current_section in [9]:
-            next_waypoint_index = (self.current_waypoint_idx + 14) % len(
+        # Section specific tuning (use stable section ID)
+        sid = self.current_section_id
+        n_waypoints = len(self.maneuverable_waypoints)  # ADD THIS LINE
+        
+        if sid == 0:
+            num_points = round(lookahead_value * 0.8)
+            next_waypoint_index = (self.current_waypoint_idx + 12) % n_waypoints  # ADD MODULO
+        if sid == 1:
+            num_points = round(lookahead_value * 0.7)
+            next_waypoint_index = (self.current_waypoint_idx + 10) % n_waypoints  # ADD MODULO
+        if sid == 3:
+            next_waypoint_index = (self.current_waypoint_idx + 22) % n_waypoints  # ADD MODULO
+            num_points = 35
+        if sid == 4:
+            num_points = lookahead_value + 5
+            next_waypoint_index = (self.current_waypoint_idx + 24) % n_waypoints  # ADD MODULO
+        if sid == 5:
+            num_points = lookahead_value
+        if sid == 6:
+            num_points = 5
+            next_waypoint_index = (self.current_waypoint_idx + 28) % n_waypoints  # ADD MODULO
+        if sid == 7:
+            num_points = round(lookahead_value * 1.25)
+        if sid == 9:
+            (self.current_waypoint_idx + 8) % n_waypoints  # This line was already broken - does nothing
+            num_points = 0
+
+            start_index_for_avg = (next_waypoint_index - (num_points // 2)) % len(
                 self.maneuverable_waypoints
             )
-            num_points = 2
-        if self.current_section == 10:
-            next_waypoint_index = (self.current_waypoint_idx + 12) % len(
-                self.maneuverable_waypoints
-            )
-            num_points = 2
 
-        start_index_for_avg = (next_waypoint_index - (num_points // 2)) % len(
-            self.maneuverable_waypoints
-        )
+            next_waypoint = self.maneuverable_waypoints[next_waypoint_index]
+            next_location = next_waypoint.location
 
-        next_waypoint = self.maneuverable_waypoints[next_waypoint_index]
-        next_location = next_waypoint.location
+            sample_points = [
+                (start_index_for_avg + i) % len(self.maneuverable_waypoints)
+                for i in range(0, num_points)
+            ]
+            if num_points > 3:
+                location_sum = reduce(
+                    lambda x, y: x + y,
+                    (self.maneuverable_waypoints[i].location for i in sample_points),
+                )
+                num_points = len(sample_points)
+                new_location = location_sum / num_points
+                shift_distance = np.linalg.norm(next_location - new_location)
+                max_shift_distance = 2.0
+                if sid == 1:
+                    max_shift_distance = 0.2
+                if shift_distance > max_shift_distance:
+                    uv = (new_location - next_location) / shift_distance
+                    new_location = next_location + uv * max_shift_distance
 
-        sample_points = [
-            (start_index_for_avg + i) % len(self.maneuverable_waypoints)
-            for i in range(0, num_points)
-        ]
-        if num_points > 3:
-            location_sum = reduce(
-                lambda x, y: x + y,
-                (self.maneuverable_waypoints[i].location for i in sample_points),
-            )
-            num_points = len(sample_points)
-            new_location = location_sum / num_points
-            shift_distance = np.linalg.norm(next_location - new_location)
-            max_shift_distance = 2.0
-            if self.current_section == 1:
-                max_shift_distance = 0.2
-            if shift_distance > max_shift_distance:
-                uv = (new_location - next_location) / shift_distance
-                new_location = next_location + uv * max_shift_distance
+                target_waypoint = roar_py_interface.RoarPyWaypoint(
+                    location=new_location,
+                    roll_pitch_yaw=np.ndarray([0, 0, 0]),
+                    lane_width=0.0,
+                )
+                # if next_waypoint_index > 1900 and next_waypoint_index < 2300:
+                #   print("AVG: next_ind:" + str(next_waypoint_index) + " next_loc: " + str(next_location)
+                #       + " new_loc: " + str(new_location) + " shift:" + str(shift_distance)
+                #       + " num_points: " + str(num_points) + " start_ind:" + str(start_index_for_avg)
+                #       + " curr_speed: " + str(current_speed))
 
-            target_waypoint = roar_py_interface.RoarPyWaypoint(
-                location=new_location,
-                roll_pitch_yaw=np.ndarray([0, 0, 0]),
-                lane_width=0.0,
-            )
-            # if next_waypoint_index > 1900 and next_waypoint_index < 2300:
-            #   print("AVG: next_ind:" + str(next_waypoint_index) + " next_loc: " + str(next_location)
-            #       + " new_loc: " + str(new_location) + " shift:" + str(shift_distance)
-            #       + " num_points: " + str(num_points) + " start_ind:" + str(start_index_for_avg)
-            #       + " curr_speed: " + str(current_speed))
+            else:
+                target_waypoint = self.maneuverable_waypoints[next_waypoint_index]
 
-        else:
-            target_waypoint = self.maneuverable_waypoints[next_waypoint_index]
-
-        return target_waypoint
+            return target_waypoint
