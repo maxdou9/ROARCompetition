@@ -126,8 +126,9 @@ class ThrottleController:
         # Raised from 0.9 to 0.92 - accelerate longer before backing off
         speed_up_threshold = 0.92
         throttle_decrease_multiple = 0.7
+        # Raised from 1.25 to 1.3 - accelerate harder when below target
         throttle_increase_multiple = 1.3
-        brake_threshold_multiplier = 1.05 # raised from 1.0: brake aggressively and later
+        brake_threshold_multiplier = 1.0
         percent_speed_change = (speed_data.current_speed - self.previous_speed) / (
             self.previous_speed + 0.0001
         )
@@ -174,7 +175,7 @@ class ThrottleController:
                     self.brake_ticks = 0
                     return 1, 0
             else:
-                if speed_change >= 2.0:
+                if speed_change >= 2.5: # changed from 2.5
                     self.dprint(
                         "tb: tick "
                         + str(self.tick_counter)
@@ -188,7 +189,7 @@ class ThrottleController:
                     speed_data.current_speed
                 )
 
-                if percent_of_max > 1.03 or percent_speed_change > ( # changed from 
+                if percent_of_max > 1.02 or percent_speed_change > (
                     -true_percent_change_per_tick / 2
                 ):
                     self.dprint(
@@ -205,7 +206,7 @@ class ThrottleController:
                     return throttle_to_maintain, 0
         else:
             self.brake_ticks = 0
-            if speed_change >= 2.5:
+            if speed_change >= 2.5: # changed from 2.5
                 self.dprint(
                     "tb: tick "
                     + str(self.tick_counter)
@@ -261,7 +262,7 @@ class ThrottleController:
             return speed_data[0]
 
     def get_throttle_to_maintain_speed(self, current_speed: float):
-        throttle = 0.75 + current_speed / 500
+        throttle = 0.78 + current_speed / 500 #increased from 0.75
         return throttle
 
     def speed_for_turn(
@@ -323,8 +324,9 @@ class ThrottleController:
         if radius >= self.max_radius:
             return self.max_speed
 
+        # S0 was MISSING - added with same value as default
         section_mu = {
-            0: 2.75,   # added (was missing, used default anyway)
+            0: 2.75,   # ADDED (was missing, used default anyway)
             1: 3.00,
             2: 3.35,
             3: 3.4,
