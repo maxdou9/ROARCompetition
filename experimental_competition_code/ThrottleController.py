@@ -463,8 +463,8 @@ class ThrottleController:
 
         # v6: Increased mu for S0/S1 to allow higher speed
         mu_by_id = {
-            0: 3.6,      # INCREASED from 3.4 - more speed through curve
-            1: 2.9,      # INCREASED from 2.7 - more speed through corner
+            0: 3.6,      # increased from 3.4 - more speed through curve
+            1: 2.9,      # increased from 2.7 - more speed through corner
             2: 3.37,
             3: 3.4,
             10: 4.0,
