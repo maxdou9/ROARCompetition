@@ -29,7 +29,6 @@ class ThrottleController:
         self.brake_ticks = 0
         self.last_recommended_speed_kmh = None
 
-        # Trail braking state
         self.trail_brake_active = False
         self.trail_brake_ticks = 0
         self.filtered_recommended = None
@@ -50,7 +49,6 @@ class ThrottleController:
         
         self.current_section_id = current_section_id
         
-        # Reset trail brake state on section change
         if self.last_section_id is not None and self.last_section_id != current_section_id:
             self.filtered_recommended = None
             self.trail_brake_active = False
@@ -159,7 +157,6 @@ class ThrottleController:
     def _trail_brake_logic(self, speed_data: SpeedData, section_id: int):
         """
         Trail braking with section-specific tuning.
-        v5: GENTLE progressive braking - early activation but soft force
         """
         
         raw_rec = speed_data.recommended_speed_now
@@ -167,7 +164,7 @@ class ThrottleController:
             self.filtered_recommended = raw_rec
         else:
             if section_id in [0, 1]:
-                alpha = 0.4  # Medium-fast response
+                alpha = 0.4
             elif section_id == 3:
                 alpha = 0.5
             else:
@@ -178,31 +175,25 @@ class ThrottleController:
         percent_of_max = speed_data.current_speed / (recommended + 1e-6)
         overspeed_error = max(0.0, percent_of_max - 1.0)
 
-        # === SECTION-SPECIFIC TRAIL BRAKING PARAMETERS ===
-        # v5: BALANCED - early activation but GENTLE braking force
         trail_params = {
-            # Section 0: Early but GENTLE braking
-            # Goal: Scrub speed gradually, not slam the brakes
             0: {
-                'BRAKE_START': 1.01,      # Start early (1% over)
-                'BRAKE_STOP': 0.97,       # Release at 97%
-                'K_ERROR': 5.0,           # REDUCED from 10 - gentler braking
-                'MAX_BRAKE_TICKS': 50,    # Allow very long gentle braking
-                'MIN_BRAKE': 0.05,        # REDUCED from 0.12 - light minimum
-                'TARGET_DECEL': 1.5,      # REDUCED - slower deceleration is OK
-                'MAX_BRAKE_FORCE': 0.35,  # NEW - cap maximum brake at 35%
+                'BRAKE_START': 1.01,
+                'BRAKE_STOP': 0.97,
+                'K_ERROR': 5.0,
+                'MAX_BRAKE_TICKS': 50,
+                'MIN_BRAKE': 0.05,
+                'TARGET_DECEL': 1.5,
+                'MAX_BRAKE_FORCE': 0.35,
             },
-            # Section 1: Very gentle through corner
             1: {
                 'BRAKE_START': 1.015,
                 'BRAKE_STOP': 0.97,
-                'K_ERROR': 4.0,           # Gentle
+                'K_ERROR': 4.0,
                 'MAX_BRAKE_TICKS': 30,
                 'MIN_BRAKE': 0.03,
                 'TARGET_DECEL': 1.2,
-                'MAX_BRAKE_FORCE': 0.25,  # Even lighter max brake
+                'MAX_BRAKE_FORCE': 0.25,
             },
-            # Section 3: SHARP RIGHT - still needs aggressive braking
             3: {
                 'BRAKE_START': 1.01,
                 'BRAKE_STOP': 0.98,
@@ -210,9 +201,8 @@ class ThrottleController:
                 'MAX_BRAKE_TICKS': 20,
                 'MIN_BRAKE': 0.15,
                 'TARGET_DECEL': 3.0,
-                'MAX_BRAKE_FORCE': 1.0,   # No cap for sharp corner
+                'MAX_BRAKE_FORCE': 1.0,
             },
-            # Section 4: Ascari entry
             4: {
                 'BRAKE_START': 1.03,
                 'BRAKE_STOP': 0.995,
@@ -222,7 +212,6 @@ class ThrottleController:
                 'TARGET_DECEL': 2.2,
                 'MAX_BRAKE_FORCE': 1.0,
             },
-            # Section 6: Parabolica approach
             6: {
                 'BRAKE_START': 1.025,
                 'BRAKE_STOP': 0.99,
@@ -232,7 +221,6 @@ class ThrottleController:
                 'TARGET_DECEL': 2.2,
                 'MAX_BRAKE_FORCE': 1.0,
             },
-            # Section 9: Long sweeper
             9: {
                 'BRAKE_START': 1.04,
                 'BRAKE_STOP': 0.995,
@@ -262,9 +250,8 @@ class ThrottleController:
         TARGET_DECEL_PER_TICK = params['TARGET_DECEL']
         MAX_BRAKE_FORCE = params['MAX_BRAKE_FORCE']
         
-        K_DECEL = 0.1  # Reduced from 0.15
+        K_DECEL = 0.1
 
-        # === HYSTERESIS STATE MACHINE ===
         if not self.trail_brake_active:
             if percent_of_max >= BRAKE_START:
                 self.trail_brake_active = True
@@ -275,7 +262,6 @@ class ThrottleController:
                 self.trail_brake_active = False
                 self.dprint(f"[TRAIL] Section {section_id}: DEACTIVATED at {percent_of_max:.3f}")
 
-        # === BRAKE CALCULATION ===
         if self.trail_brake_active:
             self.trail_brake_ticks += 1
             
@@ -285,23 +271,19 @@ class ThrottleController:
             brake_amount = K_ERROR * overspeed_error
             brake_amount += K_DECEL * decel_deficit
             
-            # === SECTION 3 SPECIAL: More aggressive ===
             if section_id == 3:
                 if overspeed_error > 0.05:
                     brake_amount *= 1.5
                 if percent_of_max > 1.0:
                     brake_amount = max(brake_amount, MIN_BRAKE + 0.1)
             
-            # === DERIVATIVE RELIEF ===
-            # If already decelerating, ease off the brakes
             if actual_decel > TARGET_DECEL_PER_TICK * 1.2:
-                brake_amount *= 0.3  # Strong relief
+                brake_amount *= 0.3
             elif actual_decel > TARGET_DECEL_PER_TICK:
-                brake_amount *= 0.5  # Moderate relief
+                brake_amount *= 0.5
             elif actual_decel > TARGET_DECEL_PER_TICK * 0.7:
-                brake_amount *= 0.7  # Light relief
+                brake_amount *= 0.7
             
-            # === TAPER NEAR RELEASE ===
             taper_start = 1.0 + (BRAKE_START - 1.0) * 0.5
             if percent_of_max < taper_start:
                 taper_range = taper_start - BRAKE_STOP
@@ -309,17 +291,12 @@ class ThrottleController:
                 taper_factor = max(0.0, min(1.0, taper_factor))
                 brake_amount *= taper_factor
             
-            # Apply minimum brake when active
             if brake_amount > 0.01:
                 brake_amount = max(MIN_BRAKE, brake_amount)
             
-            # === CAP MAXIMUM BRAKE FORCE (NEW) ===
             brake_amount = min(brake_amount, MAX_BRAKE_FORCE)
-            
-            # Final clamp
             brake_amount = max(0.0, min(1.0, brake_amount))
             
-            # === SAFETY RELEASE ===
             if self.trail_brake_ticks > MAX_CONTINUOUS_BRAKE:
                 if overspeed_error < 0.01:
                     self.trail_brake_active = False
@@ -341,10 +318,6 @@ class ThrottleController:
             return 1.0, 0.0
 
     def _standard_brake_logic(self, speed_data: SpeedData):
-        """
-        Standard braking logic for non-trail-brake sections.
-        """
-        
         percent_of_max = speed_data.current_speed / speed_data.recommended_speed_now
         avg_speed_change_per_tick = 2.4
         true_percent_change_per_tick = round(
@@ -488,11 +461,10 @@ class ThrottleController:
         if radius >= self.max_radius:
             return self.max_speed
 
-        # Per-section mu tuning
-        # v5: More balanced mu values
+        # v6: Increased mu for S0/S1 to allow higher speed
         mu_by_id = {
-            0: 3.4,      # RAISED back from 3.0 - not as aggressive
-            1: 2.7,      # RAISED back from 2.6
+            0: 3.6,      # INCREASED from 3.4 - more speed through curve
+            1: 2.9,      # INCREASED from 2.7 - more speed through corner
             2: 3.37,
             3: 3.4,
             10: 4.0,
@@ -521,4 +493,4 @@ class ThrottleController:
     def dprint(self, text):
         if self.display_debug:
             print(text)
-            self.debug_strings.append(text)
+            self.debug_strings.append(text) 
