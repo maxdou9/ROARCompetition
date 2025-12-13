@@ -185,13 +185,13 @@ class RoarCompetitionSolution:
         
         sid = self.current_section_id
         
-        # === S0 - Strong steering to track the curve ===
+        #Strong steering to track the curve 
         if sid == 0:
             steerMultiplier *= 1.5
             if current_speed_kmh > 150:
                 steerMultiplier = max(steerMultiplier, 2.2)
         
-        # === S1 - Corner apex needs aggressive steering ===
+        # Corner apex needs aggressive steering 
         if sid == 1:
             steerMultiplier *= 1.8
             if current_speed_kmh > 120:
@@ -298,11 +298,11 @@ Steer: {control['steer']:.10f} \n"
         sid = self.current_section_id
         n_waypoints = len(self.maneuverable_waypoints)
         
-        # S0: Use default lookahead, slightly more averaging
+        # Use default lookahead, slightly more averaging
         if sid == 0:
             num_points = round(lookahead_value * 1.2)
         
-        # S1: Use default lookahead, normal averaging
+        # Use default lookahead, normal averaging
         if sid == 1:
             num_points = round(lookahead_value * 1.0)
         
